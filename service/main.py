@@ -1,12 +1,22 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import joblib
-from preprocessing import preprocess_text
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from peft import PeftModel
 
 app = FastAPI(title="Анализ тональности отзывов")
 
-model = joblib.load("model_logreg.joblib")
-vectorizer = joblib.load("vectorizer_logreg.joblib")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+tokenizer = AutoTokenizer.from_pretrained("best_model_lora")
+model = AutoModelForSequenceClassification.from_pretrained(
+    "deepvk/RuModernBERT-base",
+    num_labels=3,
+    classifier_pooling="mean"
+)
+model = PeftModel.from_pretrained(model, "best_model_lora")
+model = model.merge_and_unload()
+model = model.to(device)
+model.eval()
 LABEL_NAMES = {0: "Плохой", 1: "Нейтральный", 2: "Хороший"}
 
 
@@ -23,11 +33,13 @@ class PredictionResponse(BaseModel):
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict(request: TextRequest):
-    processed = preprocess_text(request.text)
-    X = vectorizer.transform([processed])
+    inputs = tokenizer(request.text, truncation=True, max_length=1024, return_tensors="pt").to(device)
 
-    pred_label = int(model.predict(X)[0])
-    proba = model.predict_proba(X)[0]
+    with torch.no_grad():
+        logits = model(**inputs).logits[0]
+
+    proba = torch.softmax(logits, dim=-1).cpu().tolist()
+    pred_label = int(torch.argmax(logits))
 
     return PredictionResponse(
         label=pred_label,

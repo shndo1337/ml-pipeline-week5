@@ -5,3 +5,7 @@ venv/
 
 # Датасет (скачивается отдельно, см. README)
 training/*.jsonl
+
+# Веса модели
+training/best_model/
+training/best_model_v2/
